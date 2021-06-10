@@ -35,6 +35,8 @@ var ReplyWithArray* {.redis_extern.}: proc(ctx: ptr Ctx, len: clong):cint {.cdec
 
 var ReplySetArrayLength* {.redis_extern.}: proc(ctx: ptr Ctx, len: clong) {.cdecl.}
 
+var ReplyWithError* {.redis_extern.}: proc(ctx: ptr Ctx, err: const_char_pp): cint {.cdecl.}
+
 var CreateCommand* {. redis_extern .}: proc(ctx: ptr Ctx,name: const_char_pp, 
                                     cmdfunc: CmdFunc, strflags: const_char_pp,
                                     firstkey, lastkey, keystep: cint):cint {. cdecl .}
@@ -43,6 +45,9 @@ var StringPtrLen* {.redis_extern.}: proc(str: ptr String, len: ptr csize): const
 
 var StringToDouble* {.redis_extern.}: proc(str: ptr String, d: ptr cdouble): cint {. cdecl .}
 var StringToLongLong* {.redis_extern.}: proc(str: ptr String, ll: ptr clonglong): cint {. cdecl .}
+
+var WrongArity* {.redis_extern.}: proc(ctx: ptr Ctx):cint {.cdecl.}
+
 
 template GetRedisApi(data: untyped) = discard GetApi("RedisModule_" & data.astToStr, cast[pointer](data.addr))
 
@@ -64,6 +69,9 @@ proc Init*(ctx: ptr Ctx, name: const_char_pp, ver, apiver: cint):cint {. redis_e
      GetRedisApi(StringToDouble)
      GetRedisApi(StringToLongLong)
      GetRedisApi(SetModuleAttribs)
+     GetRedisApi(WrongArity) 
+     GetRedisApi(ReplyWithError)
+
      SetModuleAttribs(ctx,name,ver,apiver)
 
      result = 0
@@ -74,11 +82,18 @@ proc toArgv*(argv: ptr ptr String):auto {. inline .} = cast[Argv](argv)
 
 proc getDouble*(argv: ptr ptr String, pos:cint, value: ptr cdouble) =
      var a = argv.toArgv
-     discard StringToDouble(a[pos],value)
+     if StringToDouble(a[pos],value) == 0:
+        echo "StringToDouble: ok"
+     else:
+        echo "StringToDouble: not ok"
+
 
 proc getLongLong*(argv: ptr ptr String, pos:cint, value: ptr clonglong) =
      var a = argv.toArgv
-     discard StringToLongLong(a[pos],value)
+     if StringToLongLong(a[pos],value) == 0:
+        echo "StringToLongLong: ok"
+     else:
+        echo "StringToLongLong: not ok"
 
 proc getValue*(argv: ptr ptr String,pos:cint): const_char_pp  = 
    var a = argv.toArgv
