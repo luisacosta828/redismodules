@@ -15,17 +15,17 @@ type
                                                  argv: ptr ptr String, 
                                                  argc: cint):cint {. cdecl .}
 
-var Alloc* {.redis_extern.}: proc(bytes: csize): pointer {. cdecl .}
+var Alloc {.redis_extern.}: proc(bytes: csize): pointer {. cdecl .}
 
-var AutoMemory * {.redis_extern.}: proc(ctx: ptr Ctx){. cdecl .}
+var AutoMemory* {.redis_extern.}: proc(ctx: ptr Ctx){. cdecl .}
 
-var Realloc* {.redis_extern.}: proc(`ptr`: pointer, bytes:csize):pointer {. cdecl .}
+var Realloc {.redis_extern.}: proc(`ptr`: pointer, bytes:csize):pointer {. cdecl .}
 
-var GetApi* {.redis_extern.}: proc(name: const_char_pp, data: pointer): cint {.cdecl.}
+var GetApi {.redis_extern.}: proc(name: const_char_pp, data: pointer): cint {.cdecl.}
 
-var SetModuleAttribs* {.redis_extern.}: proc(ctx: ptr Ctx, name: const_char_pp, ver, apiver: cint) {.cdecl.} 
+var SetModuleAttribs {.redis_extern.}: proc(ctx: ptr Ctx, name: const_char_pp, ver, apiver: cint) {.cdecl.} 
 
-var IsModuleNameBusy* {.codegenDecl: "$1 $2".}: proc(name: const_char_pp):cint {. cdecl .}
+var IsModuleNameBusy {.codegenDecl: "$1 $2".}: proc(name: const_char_pp):cint {. cdecl .}
 
 var ReplyWithLongLong* {.redis_extern.}: proc(ctx: ptr Ctx, ll: clonglong):cint {.cdecl.}
 
@@ -37,9 +37,15 @@ var ReplySetArrayLength* {.redis_extern.}: proc(ctx: ptr Ctx, len: clong) {.cdec
 
 var ReplyWithError* {.redis_extern.}: proc(ctx: ptr Ctx, err: const_char_pp): cint {.cdecl.}
 
+var ReplyWithNull* {.redis_extern.}: proc(ctx: ptr Ctx):cint {.cdecl.}
+
 var CreateCommand* {. redis_extern .}: proc(ctx: ptr Ctx,name: const_char_pp, 
                                     cmdfunc: CmdFunc, strflags: const_char_pp,
                                     firstkey, lastkey, keystep: cint):cint {. cdecl .}
+
+var GetSelectedDb* {.redis_extern.}: proc(ctx: ptr Ctx):cint {.cdecl.}
+var SelectDb* {.redis_extern.}: proc(ctx: ptr Ctx, newid: cint):cint {.cdecl.}
+var GetClientId* {.redis_extern.}: proc(ctx: ptr Ctx):culonglong {.cdecl.}
 
 var StringPtrLen* {.redis_extern.}: proc(str: ptr String, len: ptr csize): const_char_pp {.cdecl.}
 
@@ -49,13 +55,13 @@ var StringToLongLong* {.redis_extern.}: proc(str: ptr String, ll: ptr clonglong)
 var WrongArity* {.redis_extern.}: proc(ctx: ptr Ctx):cint {.cdecl.}
 
 
-template GetRedisApi(data: untyped) = discard GetApi("RedisModule_" & data.astToStr, cast[pointer](data.addr))
+template GetRedisApi(data: untyped) = discard GetApi("RedisModule_" & data.astToStr,cast[pointer](data.addr))
 
 proc Init*(ctx: ptr Ctx, name: const_char_pp, ver, apiver: cint):cint {. redis_extern .} = 
 
      let getapifuncptr:pointer = cast[ptr UncheckedArray[pointer]](ctx)[0]
      GetApi = cast[proc(name: const_char_pp, data: pointer): cint {.cdecl.}](cast[culong](getapifuncptr))
-
+     
      GetRedisApi(Alloc)
      GetRedisApi(AutoMemory)
      GetRedisApi(Realloc)
@@ -71,6 +77,11 @@ proc Init*(ctx: ptr Ctx, name: const_char_pp, ver, apiver: cint):cint {. redis_e
      GetRedisApi(SetModuleAttribs)
      GetRedisApi(WrongArity) 
      GetRedisApi(ReplyWithError)
+     GetRedisApi(ReplyWithNull)
+
+     GetRedisApi(GetSelectedDb)     
+     GetRedisApi(SelectDb)
+     GetRedisApi(GetClientId)
 
      SetModuleAttribs(ctx,name,ver,apiver)
 
