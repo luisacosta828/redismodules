@@ -62,6 +62,7 @@ var CallReplyType* {.redis_extern.}: proc(reply: ptr CallReply):cint {. cdecl .}
 
 var CallReplyInteger* {.redis_extern.}: proc(reply: ptr CallReply):clonglong {. cdecl .}
 
+var CallReplyStringPtr* {.redis_extern.}: proc(reply: ptr CallReply,len: ptr csize):const_char_pp {. cdecl .}
 
 template GetRedisApi(data: untyped) = discard GetApi("RedisModule_" & data.astToStr,cast[pointer](data.addr))
 
@@ -94,6 +95,8 @@ proc Init*(ctx: ptr Ctx, name: const_char_pp, ver, apiver: cint):cint {. redis_e
      GetRedisApi(Call)
      GetRedisApi(CallReplyType)
      GetRedisApi(CallReplyInteger)
+     GetRedisApi(CallReplyStringPtr)
+
      SetModuleAttribs(ctx,name,ver,apiver)
 
      result = 0
@@ -107,7 +110,6 @@ proc getDouble*(argv: ptr ptr String, pos:cint, value: ptr cdouble) =
         echo "StringToDouble: ok"
      else:
         echo "StringToDouble: not ok"
-
 
 proc getLongLong*(argv: ptr ptr String, pos:cint, value: ptr clonglong) =
      var a = argv.toArgv
@@ -130,18 +132,24 @@ proc arrayOf*(ctx: ptr Ctx, data:seq, datatype: string):cint {. inline .} =
                 discard ReplyWithSimpleString(ctx,$item)
             else: 
                 result = 1
-    
         
 #Command Wrappers
-proc dispatch_reply_method(reply: ptr CallReply):auto =
+proc dispatch_reply_method(reply: ptr CallReply):auto {. inline .} =
     if not reply.isNil:
        result = case CallReplyType(reply):
-            of 2: CallReplyInteger(reply) 
-            else: -1
+            of 0,1: CallReplyStringPtr(reply,nil)
+            of 2: $CallReplyInteger(reply)
+            else: "-1"
                 
-proc set*(ctx: ptr Ctx, key:string, value: string) = discard Call(ctx,"SET","cc",key,value)
-         
-proc incr*(ctx: ptr Ctx, key:string):auto = Call(ctx,"INCR","c",key).dispatch_reply_method
+proc set*(ctx: ptr Ctx, key:string, value: string) {. inline .} = discard Call(ctx,"SET","cc",key,value)
 
-proc incrBy*(ctx: ptr Ctx, key:string, value: string):auto = Call(ctx,"INCRBY","cc",key,value).dispatch_reply_method
+proc get*(ctx: ptr Ctx, key:string):auto {. inline .} = Call(ctx,"GET","c",key).dispatch_reply_method
+         
+proc incr*(ctx: ptr Ctx, key:string):auto {. inline .} = Call(ctx,"INCR","c",key).dispatch_reply_method
+
+proc incrBy*(ctx: ptr Ctx, key:string, value: string):auto {. inline .} = Call(ctx,"INCRBY","cc",key,value).dispatch_reply_method
+
+proc decr*(ctx: ptr Ctx, key:string):auto {. inline .} = Call(ctx,"DECR","c",key).dispatch_reply_method
+
+proc decrBy*(ctx: ptr Ctx, key:string, value: string):auto {. inline .} = Call(ctx,"DECRBY","cc",key,value).dispatch_reply_method
 
