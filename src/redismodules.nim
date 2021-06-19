@@ -1,3 +1,4 @@
+#pragma definitions
 {.pragma: opaqueType, exportc: "RedisModule$1", incompleteStruct.}
 {.pragma: redis_extern, exportc:"RedisModule_$1", dynlib.}
 
@@ -6,9 +7,10 @@ type
     const_char_pp {.importc:"const char *".} = cstring
     Ctx* {.opaqueType.} = object
     String* {.opaqueType.} = object
-    
-    Argv = ptr UncheckedArray[ptr String]
+    CallReply* {.opaqueType.} = object    
 
+    Argv = ptr UncheckedArray[ptr String]
+    
 #function pointers definitions
 type
     CmdFunc* {.exportc: "RedisModule$1".} = proc(ctx: ptr Ctx, 
@@ -52,7 +54,13 @@ var StringPtrLen* {.redis_extern.}: proc(str: ptr String, len: ptr csize): const
 var StringToDouble* {.redis_extern.}: proc(str: ptr String, d: ptr cdouble): cint {. cdecl .}
 var StringToLongLong* {.redis_extern.}: proc(str: ptr String, ll: ptr clonglong): cint {. cdecl .}
 
-var WrongArity* {.redis_extern.}: proc(ctx: ptr Ctx):cint {.cdecl.}
+var WrongArity* {.redis_extern.}: proc(ctx: ptr Ctx,):cint {.cdecl.}
+
+var Call* {.redis_extern.}: proc(ctx: ptr Ctx, cmdname: const_char_pp, fmt: const_char_pp):ptr CallReply {.cdecl, varargs.}
+
+var CallReplyType* {.redis_extern.}: proc(reply: ptr CallReply):cint {. cdecl .}
+
+var CallReplyInteger* {.redis_extern.}: proc(reply: ptr CallReply):clonglong {. cdecl .}
 
 
 template GetRedisApi(data: untyped) = discard GetApi("RedisModule_" & data.astToStr,cast[pointer](data.addr))
@@ -83,12 +91,14 @@ proc Init*(ctx: ptr Ctx, name: const_char_pp, ver, apiver: cint):cint {. redis_e
      GetRedisApi(SelectDb)
      GetRedisApi(GetClientId)
 
+     GetRedisApi(Call)
+     GetRedisApi(CallReplyType)
+     GetRedisApi(CallReplyInteger)
      SetModuleAttribs(ctx,name,ver,apiver)
 
      result = 0
 
-
-#Utilies
+#Utilities
 proc toArgv*(argv: ptr ptr String):auto {. inline .} = cast[Argv](argv)
 
 proc getDouble*(argv: ptr ptr String, pos:cint, value: ptr cdouble) =
@@ -122,3 +132,16 @@ proc arrayOf*(ctx: ptr Ctx, data:seq, datatype: string):cint {. inline .} =
                 result = 1
     
         
+#Command Wrappers
+proc dispatch_reply_method(reply: ptr CallReply):auto =
+    if not reply.isNil:
+       result = case CallReplyType(reply):
+            of 2: CallReplyInteger(reply) 
+            else: -1
+                
+proc set*(ctx: ptr Ctx, key:string, value: string) = discard Call(ctx,"SET","cc",key,value)
+         
+proc incr*(ctx: ptr Ctx, key:string):auto = Call(ctx,"INCR","c",key).dispatch_reply_method
+
+proc incrBy*(ctx: ptr Ctx, key:string, value: string):auto = Call(ctx,"INCRBY","cc",key,value).dispatch_reply_method
+
