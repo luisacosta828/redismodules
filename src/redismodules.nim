@@ -1,3 +1,6 @@
+import tables
+import strutils
+
 #pragma definitions
 {.pragma: opaqueType, exportc: "RedisModule$1", incompleteStruct.}
 {.pragma: redis_extern, exportc:"RedisModule_$1", dynlib.}
@@ -64,6 +67,8 @@ var CallReplyInteger* {.redis_extern.}: proc(reply: ptr CallReply):clonglong {. 
 
 var CallReplyStringPtr* {.redis_extern.}: proc(reply: ptr CallReply,len: ptr csize):const_char_pp {. cdecl .}
 
+var CallReplyArrayElement* {.redis_extern.}: proc(reply: ptr CallReply,idx: csize):ptr CallReply {. cdecl .}
+
 template GetRedisApi(data: untyped) = discard GetApi("RedisModule_" & data.astToStr,cast[pointer](data.addr))
 
 proc Init*(ctx: ptr Ctx, name: const_char_pp, ver, apiver: cint):cint {. redis_extern .} = 
@@ -96,6 +101,7 @@ proc Init*(ctx: ptr Ctx, name: const_char_pp, ver, apiver: cint):cint {. redis_e
      GetRedisApi(CallReplyType)
      GetRedisApi(CallReplyInteger)
      GetRedisApi(CallReplyStringPtr)
+     GetRedisApi(CallReplyArrayElement)
 
      SetModuleAttribs(ctx,name,ver,apiver)
 
@@ -133,15 +139,24 @@ proc arrayOf*(ctx: ptr Ctx, data:seq, datatype: string):cint {. inline .} =
             else: 
                 result = 1
         
-#Command Wrappers
+#String Commands Wrappers
 proc dispatch_reply_method(reply: ptr CallReply):auto {. inline .} =
     if not reply.isNil:
        result = case CallReplyType(reply):
-            of 0,1: CallReplyStringPtr(reply,nil)
+            of 0,1: $CallReplyStringPtr(reply,nil)
             of 2: $CallReplyInteger(reply)
             else: "-1"
-                
-proc set*(ctx: ptr Ctx, key:string, value: string) {. inline .} = discard Call(ctx,"SET","cc",key,value)
+
+proc set*(ctx: ptr Ctx, key:string, value: string, options: Table[string,string] = initTable[string,string]()) {. inline .} = 
+    if options.len == 0:
+        discard Call(ctx,"SET","cc",key,value)
+    else:
+        if options.contains("EX"):
+            discard Call(ctx,"SET","cccc",key,value,"EX",options["EX"])
+        elif options.contains("NX"):
+            discard Call(ctx,"SET","ccc",key,value,"NX") 
+        elif options.contains("XX"):
+            discard Call(ctx,"SET","ccc",key,value,"XX")
 
 proc get*(ctx: ptr Ctx, key:string):auto {. inline .} = Call(ctx,"GET","c",key).dispatch_reply_method
          
@@ -153,3 +168,24 @@ proc decr*(ctx: ptr Ctx, key:string):auto {. inline .} = Call(ctx,"DECR","c",key
 
 proc decrBy*(ctx: ptr Ctx, key:string, value: string):auto {. inline .} = Call(ctx,"DECRBY","cc",key,value).dispatch_reply_method
 
+
+#Set Commands Wrappers
+
+proc sadd*(ctx:ptr Ctx, key:string, members:seq[string]): auto {. inline .} = 
+    for member in members: discard Call(ctx,"SADD","cc",key,member)
+
+proc scard*(ctx:ptr Ctx, key:string): auto {. inline .} = Call(ctx,"SCARD","c",key).dispatch_reply_method
+
+proc dispatch_array_reply(reply: ptr CallReply):auto {. inline .} =
+    var r: seq[string]
+    if not reply.isNil:
+       var ugly_arr = CallReplyArrayElement(reply,0).dispatch_reply_method.split("\c\n")
+       for u in ugly_arr: 
+           if not u.split("\c\n")[0].contains("$"):
+               r.add(u.split("\c\n")[0])
+    result = r[0..r.len-2]
+
+proc smembers*(ctx:ptr Ctx, key:string): auto {. inline .} = 
+    result = Call(ctx,"SMEMBERS","c",key).dispatch_array_reply
+
+#Sorted Set Commands Wrappers
