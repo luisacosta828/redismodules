@@ -46,7 +46,7 @@ var ReplyWithNull* {.redis_extern.}: proc(ctx: ptr Ctx):cint {.cdecl.}
 
 var CreateCommand* {. redis_extern .}: proc(ctx: ptr Ctx,name: const_char_pp, 
                                     cmdfunc: CmdFunc, strflags: const_char_pp,
-                                    firstkey, lastkey, keystep: cint):cint {. cdecl .}
+                                    firstkey, lastkey, keystep: cint = 0):cint {. cdecl .}
 
 var GetSelectedDb* {.redis_extern.}: proc(ctx: ptr Ctx):cint {.cdecl.}
 var SelectDb* {.redis_extern.}: proc(ctx: ptr Ctx, newid: cint):cint {.cdecl.}
@@ -71,7 +71,7 @@ var CallReplyArrayElement* {.redis_extern.}: proc(reply: ptr CallReply,idx: csiz
 
 template GetRedisApi(data: untyped) = discard GetApi("RedisModule_" & data.astToStr,cast[pointer](data.addr))
 
-proc Init*(ctx: ptr Ctx, name: const_char_pp, ver, apiver: cint):cint {. redis_extern .} = 
+proc Init*(ctx: ptr Ctx, name: const_char_pp, ver, apiver: cint = 1):cint {. redis_extern .} = 
 
      let getapifuncptr:pointer = cast[ptr UncheckedArray[pointer]](ctx)[0]
      GetApi = cast[proc(name: const_char_pp, data: pointer): cint {.cdecl.}](cast[culong](getapifuncptr))
@@ -174,7 +174,25 @@ proc decrBy*(ctx: ptr Ctx, key:string, value: string):auto {. inline .} = Call(c
 proc sadd*(ctx:ptr Ctx, key:string, members:seq[string]): auto {. inline .} = 
     for member in members: discard Call(ctx,"SADD","cc",key,member)
 
+proc sremove*(ctx:ptr Ctx, key:string, members: seq[string]): auto {. inline .} =
+    for member in members: discard Call(ctx,"SREM","cc",key,member)
+
 proc scard*(ctx:ptr Ctx, key:string): auto {. inline .} = Call(ctx,"SCARD","c",key).dispatch_reply_method
+
+proc sdiffstore*(ctx:ptr Ctx, keys:seq[string]): auto {. inline .} = 
+    Call(ctx,"SDIFF","ccc",keys[0],keys[1],keys[2]).dispatch_reply_method
+
+proc smove*(ctx:ptr Ctx, keys:seq[string]): auto {. inline .} =
+    Call(ctx,"SMOVE","ccc",keys[0],keys[1],keys[2]).dispatch_reply_method
+
+proc sinterstore*(ctx:ptr Ctx, keys:seq[string]): auto {. inline .} =
+    Call(ctx,"SINTERSTORE","ccc",keys[0],keys[1],keys[2]).dispatch_reply_method
+
+proc sunionstore*(ctx:ptr Ctx, keys:seq[string]): auto {. inline .} =
+    Call(ctx,"SUNIONSTORE","ccc",keys[0],keys[1],keys[2]).dispatch_reply_method
+
+proc sismember*(ctx:ptr Ctx, key: string, value:string): auto {. inline .} =
+    Call(ctx,"SISMEMBER","cc",key,value).dispatch_reply_method
 
 proc dispatch_array_reply(reply: ptr CallReply):auto {. inline .} =
     var r: seq[string]
@@ -186,6 +204,15 @@ proc dispatch_array_reply(reply: ptr CallReply):auto {. inline .} =
     result = r[0..r.len-2]
 
 proc smembers*(ctx:ptr Ctx, key:string): auto {. inline .} = 
-    result = Call(ctx,"SMEMBERS","c",key).dispatch_array_reply
+    Call(ctx,"SMEMBERS","c",key).dispatch_array_reply
+
+proc sdiff*(ctx:ptr Ctx, keys:seq[string]): auto {. inline .} = 
+    Call(ctx,"SDIFF","cc",keys[0],keys[1]).dispatch_array_reply
+
+proc sinter*(ctx:ptr Ctx, keys:seq[string]): auto {. inline .} =
+    Call(ctx,"SINTER","cc",keys[0],keys[1]).dispatch_array_reply
+
+proc sunion*(ctx:ptr Ctx, keys:seq[string]): auto {. inline .} =
+    Call(ctx,"SUNION","cc",keys[0],keys[1]).dispatch_array_reply
 
 #Sorted Set Commands Wrappers
