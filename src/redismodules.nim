@@ -1,5 +1,6 @@
 import tables
 import strutils
+import macros
 
 #pragma definitions
 {.pragma: opaqueType, exportc: "RedisModule$1", incompleteStruct.}
@@ -7,9 +8,11 @@ import strutils
 
 #opaque types definitions
 type 
-    const_char_pp {.importc:"const char *".} = cstring
+    const_char_pp* {.importc:"const char *".} = cstring
     Ctx* {.opaqueType.} = object
+    PCtx* = ptr Ctx
     String* {.opaqueType.} = object
+    PPString* = ptr ptr String
     CallReply* {.opaqueType.} = object    
 
     Argv = ptr UncheckedArray[ptr String]
@@ -33,6 +36,8 @@ var SetModuleAttribs {.redis_extern.}: proc(ctx: ptr Ctx, name: const_char_pp, v
 var IsModuleNameBusy {.codegenDecl: "$1 $2".}: proc(name: const_char_pp):cint {. cdecl .}
 
 var ReplyWithLongLong* {.redis_extern.}: proc(ctx: ptr Ctx, ll: clonglong):cint {.cdecl.}
+
+var ReplyWithDouble* {.redis_extern.}: proc(ctx: ptr Ctx, d: cdouble):cint {.cdecl.}
 
 var ReplyWithSimpleString* {.redis_extern.}: proc(ctx: ptr Ctx, msg: const_char_pp): cint {.cdecl.}
 
@@ -82,6 +87,7 @@ proc Init*(ctx: ptr Ctx, name: const_char_pp, ver, apiver: cint = 1):cint {. red
      GetRedisApi(CreateCommand)
 
      GetRedisApi(ReplyWithLongLong)
+     GetRedisApi(ReplyWithDouble)
      GetRedisApi(ReplyWithSimpleString)
      GetRedisApi(StringPtrLen)
      GetRedisApi(ReplyWithArray)
@@ -124,7 +130,7 @@ proc getLongLong*(argv: ptr ptr String, pos:cint, value: ptr clonglong) =
      else:
         echo "StringToLongLong: not ok"
 
-proc getValue*(argv: ptr ptr String,pos:cint): const_char_pp  = 
+proc getValue*(argv: ptr ptr String,pos:cint):cstring = 
    var a = argv.toArgv
    StringPtrLen(a[pos],nil)
 
@@ -216,3 +222,73 @@ proc sunion*(ctx:ptr Ctx, keys:seq[string]): auto {. inline .} =
     Call(ctx,"SUNION","cc",keys[0],keys[1]).dispatch_array_reply
 
 #Sorted Set Commands Wrappers
+
+
+#redis macro definition
+proc explainWrapper(fn: NimNode ):untyped =
+     # Cambiamos el nombre de la funcion para evitar inconvenientes
+     # Esta nueva funcion será la que se registre como redismodules
+     # La version sin convertir funcionara para test
+
+     let redis_proc = newProc(ident($fn.name))
+     # Especificamos el return type
+     redis_proc.params[0] = ident("cint")
+
+     #NimTypes to RedisTypes
+     var NimTypes = {"int": "clonglong", "double": "cdouble", "float": "cdouble", "string":"const_char_pp"}.toTable
+     var ReplyWithRedisTypes = {"int":"LongLong", "double": "Double", "string":"SimpleString"}.toTable
+     var RedisToNim = {"int":"getLongLong", "double": "getDouble", "string":"getValue"}.toTable
+
+     # Especificamos los parametros para que sea una funcion compatible
+     redis_proc.params.add(newIdentDefs(ident("ctx"),newEmptyNode()),
+                           newIdentDefs(ident("argv"),newEmptyNode()),
+                           newIdentDefs(ident("argc"),newEmptyNode()) )
+
+     let rbody = newTree(nnkStmtList, redis_proc.body)
+     let fnparams_len = fn.params.len - 1
+     var varSection = newNimNode(nnkVarSection)
+
+     # Declaramos las variables desde las especificaciones del los parametros
+     for i in 1..fnparams_len:
+         var param = fn.params[i].repr.split(":")
+         var pvar  =  param[0]
+         var ptype =  param[1].split(" ")[1]
+         varSection.add( newIdentDefs(ident(pvar), ident(NimTypes[ptype])))
+
+     #verificar si puedo cambiar esto por el implicit result
+     varSection.add( newIdentDefs(ident("myres"), ident(NimTypes[fn.params[0].repr])) )
+     rbody.add(varSection)
+
+     # Como los parametros ahora son movidos de contexto al cuerpo de la funcion,
+     # sus valores son extraidos desde el parametro argv
+     for i in 1..fnparams_len:
+         var param = fn.params[i].repr.split(":")
+         var pvar  =  param[0]
+         var ptype =  param[1].split(" ")[1]
+         var f = RedisToNim[ptype]
+         if ptype == "string":
+             var getValue = newCall(ident(f),[ident("argv"),newIntLitNode(i)])
+             rbody.add newNimNode(nnkAsgn).add(ident(pvar),getValue)
+         else:
+             rbody.add newCall(ident(f),[ident("argv"),newIntLitNode(i), newCall(ident("addr"),ident(pvar))])
+
+     # Copiamos las operaciones de la funcion original
+     let body_lines = fn.body.len - 2
+     for lines in 0..body_lines: rbody.add fn.body[lines]
+     rbody.add newNimNode(nnkAsgn).add(ident("myres"),fn.body[^1])
+     # Especificamos el return type para redis
+     var replywith = ident("ReplyWith" & ReplyWithRedisTypes[fn.params[0].repr])
+     rbody.add newCall(replywith,[ident("ctx"),ident("myres")])
+
+     # Definimos los pragmas
+     let redis_pragmas = newNimNode(nnkPragma)
+     redis_pragmas.add(ident("exportc"))
+     redis_pragmas.add(ident("dynlib"))
+     redis_proc.pragma = redis_pragmas
+
+     redis_proc.body = rbody
+     echo redis_proc.repr
+     echo fn.repr
+     result = redis_proc
+
+macro redis*(fn: untyped):untyped = explainWrapper(fn)
